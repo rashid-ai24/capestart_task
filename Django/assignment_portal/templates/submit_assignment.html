@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Submit Assignment | Student Portal</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        .assignment-info { background-color: #fff; border-radius: 8px; }
+        .deadline-text { color: #dc3545; font-weight: 600; }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark shadow-sm">
+    <div class="container">
+        <span class="navbar-brand fw-bold">Assignment Portal</span>
+        <a href="{% url 'student_dashboard' %}" class="btn btn-outline-light btn-sm px-3">Back to Dashboard</a>
+    </div>
+</nav>
+
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-md-7 col-lg-6">
+            <div class="card p-4">
+                <header class="mb-4">
+                    <h3 class="fw-bold">Submit Assignment</h3>
+                    <p class="text-muted small">Please review the details below before uploading your work.</p>
+                </header>
+
+                <div class="assignment-details mb-4 p-3 border rounded bg-light">
+                    <h5 class="fw-bold text-primary">{{ assignment.title }}</h5>
+                    <p class="mb-2 text-secondary">{{ assignment.description }}</p>
+                    <div class="small">
+                        <strong>Deadline:</strong> 
+                        <span class="deadline-text">{{ assignment.deadline }}</span>
+                    </div>
+                </div>
+
+                <hr class="my-4">
+
+                <form method="POST" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <div class="mb-4">
+                        <label for="fileUpload" class="form-label fw-bold">Upload Submission File</label>
+                        <input type="file" name="file" id="fileUpload" class="form-control" required>
+                        <div class="form-text">Accepted formats: PDF, DOCX, ZIP (Max 10MB)</div>
+                    </div>
+
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            Upload and Submit
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>
