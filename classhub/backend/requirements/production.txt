@@ -21,9 +21,6 @@ newrelic>=9.4.0
 django-silk>=5.0.0
 django-querycount>=0.8.0
 
-# Database
-pgpool>=1.0.0
-
 # Caching
 django-cacheops>=0.6.2
 redis>=5.0.0
@@ -74,7 +71,6 @@ qrcode[pil]>=7.4.2
 
 # Image Processing
 Pillow>=10.2.0
-Wand>=0.18.0
 
 # Caching
 django-redis>=5.4.0

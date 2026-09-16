@@ -41,7 +41,7 @@ python-dotenv>=1.0.0
 Pillow>=10.2.0
 
 # Image Processing
- Wand>=0.18.0
+Wand>=0.7.2
 
 # Excel/CSV Support
 openpyxl>=3.1.2

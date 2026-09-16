@@ -6,7 +6,7 @@
 # ============================================
 # Stage 1: Base Python Image
 # ============================================
-FROM python:3.11-slim as base
+FROM python:3.11-slim AS base
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -29,11 +29,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ============================================
 # Stage 2: Development Image
 # ============================================
-FROM base as development
+FROM base AS development
 
 # Install development dependencies
-COPY requirements/development.txt requirements.txt
-RUN pip install -r requirements.txt
+COPY requirements/ .
+RUN pip install -r development.txt
 
 # Copy project
 COPY . .
@@ -50,16 +50,16 @@ CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
 # ============================================
 # Stage 3: Production Dependencies
 # ============================================
-FROM base as production-deps
+FROM base AS production-deps
 
 # Install production dependencies
-COPY requirements/production.txt requirements.txt
-RUN pip install -r requirements.txt
+COPY requirements/ .
+RUN pip install -r production.txt
 
 # ============================================
 # Stage 4: Production Image
 # ============================================
-FROM production-deps as production
+FROM production-deps AS production
 
 # Copy project
 COPY . .
