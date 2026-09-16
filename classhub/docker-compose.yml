@@ -1,0 +1,382 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # DATABASE: PostgreSQL 15
+  # ============================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: classhub-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-classhub}
+      POSTGRES_USER: ${POSTGRES_USER:-classhub_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-classhub_secure_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - classhub-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-classhub_user} -d ${POSTGRES_DB:-classhub}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      - "com.classhub.service=database"
+      - "com.classhub.description=PostgreSQL 15 Primary Database"
+
+  # ============================================
+  # CACHE: Redis 7
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: classhub-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server /usr/local/etc/redis/redis.conf
+    volumes:
+      - redis_data:/data
+      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    networks:
+      - classhub-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      - "com.classhub.service=cache"
+      - "com.classhub.description=Redis 7 Cache & Sessions"
+
+  # ============================================
+  # MESSAGE QUEUE: RabbitMQ 3
+  # ============================================
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: classhub-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-classhub}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-classhub_rabbitmq}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - classhub-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    labels:
+      - "com.classhub.service=message-queue"
+      - "com.classhub.description=RabbitMQ 3 Message Broker"
+
+  # ============================================
+  # OBJECT STORAGE: MinIO
+  # ============================================
+  minio:
+    image: minio/minio:latest
+    container_name: classhub-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-classhub_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-classhub_minio_password}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - classhub-network
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      - "com.classhub.service=storage"
+      - "com.classhub.description=MinIO Object Storage"
+
+  # ============================================
+  # SEARCH ENGINE: Elasticsearch 8
+  # ============================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
+    container_name: classhub-elasticsearch
+    restart: unless-stopped
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - classhub-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    labels:
+      - "com.classhub.service=search"
+      - "com.classhub.description=Elasticsearch 8 Search Engine"
+
+  # ============================================
+  # BACKEND: Django Application
+  # ============================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: classhub-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.${DJANGO_ENV:-development}
+      - DATABASE_URL=postgres://${POSTGRES_USER:-classhub_user}:${POSTGRES_PASSWORD:-classhub_secure_password}@postgres:5432/${POSTGRES_DB:-classhub}
+      - REDIS_URL=redis://redis:6379/0
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-classhub}:${RABBITMQ_PASSWORD:-classhub_rabbitmq}@rabbitmq:5672//
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-classhub_admin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-classhub_minio_password}
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - SECRET_KEY=${DJANGO_SECRET_KEY:-your-secret-key-change-in-production}
+      - DEBUG=${DEBUG:-True}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
+    volumes:
+      - ./backend:/app
+      - media_data:/app/media
+      - static_data:/app/staticfiles
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - classhub-network
+    labels:
+      - "com.classhub.service=backend"
+      - "com.classhub.description=Django REST Framework Backend"
+
+  # ============================================
+  # CELERY WORKER: Async Task Processing
+  # ============================================
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: classhub-celery-worker
+    restart: unless-stopped
+    command: celery -A config worker -l info -c ${CELERY_CONCURRENCY:-4}
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.${DJANGO_ENV:-development}
+      - DATABASE_URL=postgres://${POSTGRES_USER:-classhub_user}:${POSTGRES_PASSWORD:-classhub_secure_password}@postgres:5432/${POSTGRES_DB:-classhub}
+      - REDIS_URL=redis://redis:6379/0
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-classhub}:${RABBITMQ_PASSWORD:-classhub_rabbitmq}@rabbitmq:5672//
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-classhub_admin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-classhub_minio_password}
+      - SECRET_KEY=${DJANGO_SECRET_KEY:-your-secret-key-change-in-production}
+    volumes:
+      - ./backend:/app
+      - media_data:/app/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - classhub-network
+    labels:
+      - "com.classhub.service=celery-worker"
+      - "com.classhub.description=Celery Worker for Async Tasks"
+
+  # ============================================
+  # CELERY BEAT: Periodic Task Scheduler
+  # ============================================
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: classhub-celery-beat
+    restart: unless-stopped
+    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.${DJANGO_ENV:-development}
+      - DATABASE_URL=postgres://${POSTGRES_USER:-classhub_user}:${POSTGRES_PASSWORD:-classhub_secure_password}@postgres:5432/${POSTGRES_DB:-classhub}
+      - REDIS_URL=redis://redis:6379/0
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER:-classhub}:${RABBITMQ_PASSWORD:-classhub_rabbitmq}@rabbitmq:5672//
+      - SECRET_KEY=${DJANGO_SECRET_KEY:-your-secret-key-change-in-production}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - classhub-network
+    labels:
+      - "com.classhub.service=celery-beat"
+      - "com.classhub.description=Celery Beat Scheduler"
+
+  # ============================================
+  # FRONTEND: React Application
+  # ============================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: classhub-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000/api/v1}
+      - VITE_WS_URL=${VITE_WS_URL:-ws://localhost:8000/ws}
+    networks:
+      - classhub-network
+    labels:
+      - "com.classhub.service=frontend"
+      - "com.classhub.description=React Frontend Application"
+
+  # ============================================
+  # REVERSE PROXY: Nginx
+  # ============================================
+  nginx:
+    image: nginx:alpine
+    container_name: classhub-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./docker/nginx/ssl:/etc/nginx/ssl
+      - static_data:/var/www/static
+      - media_data:/var/www/media
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - classhub-network
+    labels:
+      - "com.classhub.service=proxy"
+      - "com.classhub.description=Nginx Reverse Proxy"
+
+  # ============================================
+  # MONITORING: Prometheus + Grafana
+  # ============================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: classhub-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - classhub-network
+    labels:
+      - "com.classhub.service=monitoring"
+      - "com.classhub.description=Prometheus Metrics"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: classhub-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - classhub-network
+    labels:
+      - "com.classhub.service=monitoring"
+      - "com.classhub.description=Grafana Dashboard"
+
+# ============================================
+# VOLUMES: Persistent Data Storage
+# ============================================
+volumes:
+  postgres_data:
+    driver: local
+    labels:
+      com.classhub.service: database
+      com.classhub.description: PostgreSQL Data
+  redis_data:
+    driver: local
+    labels:
+      com.classhub.service: cache
+      com.classhub.description: Redis Data
+  rabbitmq_data:
+    driver: local
+    labels:
+      com.classhub.service: message-queue
+      com.classhub.description: RabbitMQ Data
+  minio_data:
+    driver: local
+    labels:
+      com.classhub.service: storage
+      com.classhub.description: MinIO Object Storage
+  elasticsearch_data:
+    driver: local
+    labels:
+      com.classhub.service: search
+      com.classhub.description: Elasticsearch Data
+  media_data:
+    driver: local
+    labels:
+      com.classhub.service: backend
+      com.classhub.description: User Uploaded Media
+  static_data:
+    driver: local
+    labels:
+      com.classhub.service: backend
+      com.classhub.description: Django Static Files
+  prometheus_data:
+    driver: local
+    labels:
+      com.classhub.service: monitoring
+      com.classhub.description: Prometheus Metrics Data
+  grafana_data:
+    driver: local
+    labels:
+      com.classhub.service: monitoring
+      com.classhub.description: Grafana Dashboard Data
+
+# ============================================
+# NETWORKS: Service Communication
+# ============================================
+networks:
+  classhub-network:
+    driver: bridge
+    labels:
+      com.classhub.project: classhub
+      com.classhub.description: ClassHub Network Bridge

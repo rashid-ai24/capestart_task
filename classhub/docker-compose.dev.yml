@@ -1,0 +1,178 @@
+version: '3.8'
+
+# Development overrides for Docker Compose
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  # ============================================
+  # BACKEND: Development Mode with Hot Reload
+  # ============================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DEBUG=True
+      - DJANGO_SECRET_KEY=dev-secret-key-not-for-production
+      - ALLOWED_HOSTS=localhost,127.0.0.1,backend,0.0.0.0
+      - CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    ports:
+      - "8000:8000"
+      - "8080:8080"  # Django debug toolbar
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py runserver 0.0.0.0:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # FRONTEND: Development Mode with HMR
+  # ============================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    environment:
+      - VITE_API_URL=http://localhost:8000/api/v1
+      - VITE_WS_URL=ws://localhost:8000/ws
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+      - "5173:5173"  # Vite HMR
+    command: npm run dev -- --host 0.0.0.0
+
+  # ============================================
+  # CELERY WORKER: Development with Auto Reload
+  # ============================================
+  celery-worker:
+    command: >
+      watchmedo auto-restart --directory=/app --pattern=*.py --recursive --
+      celery -A config worker -l debug -c 2
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DEBUG=True
+      - DJANGO_SECRET_KEY=dev-secret-key-not-for-production
+
+  # ============================================
+  # CELERY BEAT: Development Mode
+  # ============================================
+  celery-beat:
+    command: celery -A config beat -l debug --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DEBUG=True
+      - DJANGO_SECRET_KEY=dev-secret-key-not-for-production
+
+  # ============================================
+  # DATABASE: Exposed Ports for GUI Tools
+  # ============================================
+  postgres:
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=classhub_dev
+      - POSTGRES_USER=classhub_dev
+      - POSTGRES_PASSWORD=dev_password
+
+  # ============================================
+  # REDIS: Exposed for GUI Tools
+  # ============================================
+  redis:
+    ports:
+      - "6379:6379"
+
+  # ============================================
+  # RABBITMQ: Management UI Exposed
+  # ============================================
+  rabbitmq:
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=classhub_dev
+      - RABBITMQ_DEFAULT_PASS=dev_rabbitmq
+
+  # ============================================
+  # MINIO: Console Exposed
+  # ============================================
+  minio:
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=classhub_dev
+      - MINIO_ROOT_PASSWORD=dev_minio_password
+
+  # ============================================
+  # NGINX: Disabled in Development
+  # ============================================
+  nginx:
+    profiles:
+      - production
+
+  # ============================================
+  # MONITORING: Exposed for Development
+  # ============================================
+  prometheus:
+    ports:
+      - "9090:9090"
+
+  grafana:
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+
+  # ============================================
+  # TOOLS: Development Utilities
+  # ============================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: classhub-pgadmin
+    restart: unless-stopped
+    ports:
+      - "5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@classhub.dev
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - classhub-network
+    profiles:
+      - tools
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: classhub-redis-commander
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    depends_on:
+      - redis
+    networks:
+      - classhub-network
+    profiles:
+      - tools
+
+volumes:
+  pgadmin_data:
+    driver: local
+  redis_data:
+    driver: local
